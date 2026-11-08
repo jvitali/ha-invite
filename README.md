@@ -36,6 +36,10 @@ password around. With Invite, you run one action and the guest does the rest.
 
 Only administrators (and automations) can run them.
 
+To run them by hand, open **Settings → Tools → Actions** (`/config/tools/action`; it was
+called *Developer tools* before Home Assistant 2026.8) and search for "Invite". After
+creating an invite, the link is in the notifications (bell icon) unless it was emailed.
+
 ```yaml
 action: invite.create
 data:
