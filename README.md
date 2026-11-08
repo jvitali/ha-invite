@@ -1,5 +1,7 @@
 # Invite for Home Assistant
 
+[![Validate](https://github.com/jvitali/ha-invite/actions/workflows/validate.yml/badge.svg)](https://github.com/jvitali/ha-invite/actions/workflows/validate.yml)
+
 Invite people to your Home Assistant with a **single-use link** where they choose their own
 username and password. The link can be emailed (SMTP, e.g. Gmail) or shared by you.
 
@@ -60,7 +62,7 @@ data:
 
 ```bash
 uv venv --python 3.14 .venv
-uv pip install --python .venv/bin/python pytest-homeassistant-custom-component
+uv pip install --python .venv/bin/python -r requirements_test.txt
 .venv/bin/python -m pytest
 ```
 
