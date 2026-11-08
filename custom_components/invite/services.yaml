@@ -1,0 +1,32 @@
+create:
+  fields:
+    name:
+      required: true
+      example: "Ana"
+      selector:
+        text:
+    email:
+      example: "ana@example.com"
+      selector:
+        text:
+          type: email
+    admin:
+      default: false
+      selector:
+        boolean:
+    expires_hours:
+      example: 48
+      selector:
+        number:
+          min: 1
+          max: 720
+          mode: box
+          unit_of_measurement: h
+revoke:
+  fields:
+    invite_id:
+      required: true
+      example: "a1b2c3d4"
+      selector:
+        text:
+list:

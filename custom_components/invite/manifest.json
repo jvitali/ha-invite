@@ -1,0 +1,14 @@
+{
+  "domain": "invite",
+  "name": "Invite",
+  "codeowners": ["@jvitali"],
+  "config_flow": true,
+  "dependencies": ["http", "person"],
+  "documentation": "https://github.com/jvitali/ha-invite",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/jvitali/ha-invite/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

@@ -1,0 +1,67 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Invite",
+        "description": "Address the guests use to open Home Assistant. Invitation links start with it, so it must be reachable from where they open the email (home network, VPN or internet).",
+        "data": { "base_url": "Home Assistant URL" }
+      }
+    },
+    "error": { "invalid_url": "Enter a full URL, starting with http:// or https://." },
+    "abort": { "single_instance_allowed": "Invite is already set up." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Invite options",
+        "description": "Leave the SMTP server empty to share links yourself instead of emailing them. For Gmail use smtp.gmail.com, port 587, STARTTLS and an app password.",
+        "data": {
+          "expiry_hours": "Invitations expire after (hours)",
+          "smtp_host": "SMTP server",
+          "smtp_port": "SMTP port",
+          "smtp_encryption": "Encryption",
+          "smtp_username": "SMTP username",
+          "smtp_password": "SMTP password (leave empty to keep the current one)",
+          "smtp_sender": "Sender address"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the SMTP server.",
+      "invalid_auth": "The SMTP server rejected the username or password.",
+      "sender_required": "A sender address is required to send email."
+    }
+  },
+  "selector": {
+    "smtp_encryption": {
+      "options": { "starttls": "STARTTLS", "tls": "TLS/SSL", "none": "None" }
+    }
+  },
+  "services": {
+    "create": {
+      "name": "Create invite",
+      "description": "Creates a single-use link for someone to choose their own username and password. Emails it if an SMTP server is configured; otherwise shows it in a notification. The link is also returned as the action response.",
+      "fields": {
+        "name": { "name": "Name", "description": "Name of the person; used for the user and the person." },
+        "email": { "name": "Email", "description": "Where to send the invitation." },
+        "admin": { "name": "Administrator", "description": "Create the user as administrator." },
+        "expires_hours": { "name": "Expires after", "description": "Hours until the link expires. Defaults to the integration option." }
+      }
+    },
+    "revoke": {
+      "name": "Revoke invite",
+      "description": "Invalidates a pending invitation.",
+      "fields": {
+        "invite_id": { "name": "Invite ID", "description": "ID returned when the invite was created, or listed by the List invites action." }
+      }
+    },
+    "list": {
+      "name": "List invites",
+      "description": "Returns pending and past invitations (without their links)."
+    }
+  },
+  "exceptions": {
+    "not_loaded": { "message": "The Invite integration is not loaded." },
+    "invite_not_found": { "message": "There is no invite with ID {invite_id}." }
+  }
+}

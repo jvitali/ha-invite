@@ -1,0 +1,67 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Invite",
+        "description": "Dirección con la que los invitados abren Home Assistant. Los enlaces de invitación empiezan con ella, así que tiene que funcionar desde donde abran el mail (red de casa, VPN o internet).",
+        "data": { "base_url": "URL de Home Assistant" }
+      }
+    },
+    "error": { "invalid_url": "Poné una URL completa, que empiece con http:// o https://." },
+    "abort": { "single_instance_allowed": "Invite ya está configurado." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de Invite",
+        "description": "Dejá vacío el servidor SMTP para compartir los enlaces vos en lugar de mandarlos por mail. Para Gmail: smtp.gmail.com, puerto 587, STARTTLS y una contraseña de aplicación.",
+        "data": {
+          "expiry_hours": "Las invitaciones vencen a las (horas)",
+          "smtp_host": "Servidor SMTP",
+          "smtp_port": "Puerto SMTP",
+          "smtp_encryption": "Cifrado",
+          "smtp_username": "Usuario SMTP",
+          "smtp_password": "Contraseña SMTP (vacía para mantener la actual)",
+          "smtp_sender": "Dirección del remitente"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No se pudo conectar al servidor SMTP.",
+      "invalid_auth": "El servidor SMTP rechazó el usuario o la contraseña.",
+      "sender_required": "Para mandar mails hace falta la dirección del remitente."
+    }
+  },
+  "selector": {
+    "smtp_encryption": {
+      "options": { "starttls": "STARTTLS", "tls": "TLS/SSL", "none": "Ninguno" }
+    }
+  },
+  "services": {
+    "create": {
+      "name": "Crear invitación",
+      "description": "Crea un enlace de un solo uso para que alguien elija su usuario y contraseña. Lo manda por mail si hay un servidor SMTP configurado; si no, lo muestra en una notificación. El enlace también vuelve como respuesta de la acción.",
+      "fields": {
+        "name": { "name": "Nombre", "description": "Nombre de la persona; se usa para el usuario y la persona." },
+        "email": { "name": "Email", "description": "A dónde mandar la invitación." },
+        "admin": { "name": "Administrador", "description": "Crear el usuario como administrador." },
+        "expires_hours": { "name": "Vence a las", "description": "Horas hasta que venza el enlace. Por defecto, la opción de la integración." }
+      }
+    },
+    "revoke": {
+      "name": "Revocar invitación",
+      "description": "Anula una invitación pendiente.",
+      "fields": {
+        "invite_id": { "name": "ID de la invitación", "description": "El ID que devolvió la creación, o el que lista la acción Listar invitaciones." }
+      }
+    },
+    "list": {
+      "name": "Listar invitaciones",
+      "description": "Devuelve las invitaciones pendientes y las anteriores (sin sus enlaces)."
+    }
+  },
+  "exceptions": {
+    "not_loaded": { "message": "La integración Invite no está cargada." },
+    "invite_not_found": { "message": "No hay ninguna invitación con el ID {invite_id}." }
+  }
+}
