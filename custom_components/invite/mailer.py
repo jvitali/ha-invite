@@ -29,6 +29,7 @@ def smtp_configured(options: Mapping[str, Any]) -> bool:
 
 
 def _connect(options: Mapping[str, Any]) -> smtplib.SMTP:
+    """Open an authenticated connection. Closes it again if any step fails."""
     host = options[CONF_SMTP_HOST]
     port = int(options.get(CONF_SMTP_PORT) or DEFAULT_SMTP_PORT)
     encryption = options.get(CONF_SMTP_ENCRYPTION, ENCRYPTION_STARTTLS)
@@ -38,10 +39,14 @@ def _connect(options: Mapping[str, Any]) -> smtplib.SMTP:
         server = smtplib.SMTP_SSL(host, port, timeout=SMTP_TIMEOUT, context=context)
     else:
         server = smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT)
+    try:
         if encryption == ENCRYPTION_STARTTLS:
             server.starttls(context=context)
-    if options.get(CONF_SMTP_USERNAME):
-        server.login(options[CONF_SMTP_USERNAME], options.get(CONF_SMTP_PASSWORD, ""))
+        if options.get(CONF_SMTP_USERNAME):
+            server.login(options[CONF_SMTP_USERNAME], options.get(CONF_SMTP_PASSWORD, ""))
+    except BaseException:
+        server.close()
+        raise
     return server
 
 

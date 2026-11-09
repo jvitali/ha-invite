@@ -11,8 +11,10 @@ password around. With Invite, you run one action and the guest does the rest.
 ## How it works
 
 1. An admin runs **Invite: Create invite** with the guest's name (and optionally an email).
-2. The guest gets a link like `https://your-ha/api/invite/register/<token>` and opens it.
-3. They pick a username and password. Invite creates the user, its login and a linked person.
+2. With an email, Invite sends the link. Without one, the link comes back in the action
+   response and you share it yourself.
+3. The guest opens `https://your-ha/api/invite/register/<token>`, picks a username and
+   password, and Invite creates the user, its login and a linked person.
 4. The link stops working. You get a notification.
 
 ## Installation (HACS)
@@ -30,15 +32,17 @@ password around. With Invite, you run one action and the guest does the rest.
 
 | Action | What it does |
 | --- | --- |
-| `invite.create` | `name` (required), `email`, `admin` (default `false`), `expires_hours`. Emails the link if SMTP is configured; otherwise shows it in a notification. Always returns `invite_id`, `link`, `expires_at` and `emailed` as response. |
+| `invite.create` | `name` (required), `email`, `admin` (default `false`), `expires_hours` (1 to 168). With `email`, sends the link over SMTP (an error if SMTP is not configured or sending fails; the invite is then revoked). Without `email`, returns the link in the response, which must be requested. Response: `invite_id`, `expires_at`, `emailed`, and `link` when not emailed. |
 | `invite.revoke` | `invite_id`. Invalidates a pending invite. |
 | `invite.list` | Returns pending and past invites (without links). |
 
-Only administrators (and automations) can run them.
+Only administrators can run them. Calls without a user (automations and scripts) are also
+allowed, like any admin-only action in Home Assistant: if non-admins can trigger one of your
+automations or scripts that calls `invite.create`, they can create invites through it.
 
 To run them by hand, open **Settings → Tools → Actions** (`/config/tools/action`; it was
-called *Developer tools* before Home Assistant 2026.8) and search for "Invite". After
-creating an invite, the link is in the notifications (bell icon) unless it was emailed.
+called *Developer tools* before Home Assistant 2026.8) and search for "Invite". The response
+with the link is shown below the action. In a script, keep it with `response_variable`.
 
 ```yaml
 action: invite.create
@@ -51,14 +55,21 @@ data:
 
 - Tokens are 256-bit random values. Only their SHA-256 hash is stored, so reading
   `.storage/invite.invites` is not enough to register.
-- Links are single use and expire (48 h by default, at most 30 days). They can be revoked.
-- The registration page needs no login. After 10 bad links in 10 minutes from the same
-  address, it answers 429 for that address.
+- Links are single use and expire (48 h by default, at most 7 days). They can be revoked.
+  Registration, creation and revocation are serialized, so a link cannot be used twice, even
+  across a reload of the integration, and a revoke never hides an account being created.
+- The registration page needs no login. After 10 unknown or used links in 10 minutes from the
+  same address (IPv6: the same /64), it answers 429 for unknown links; a valid link always
+  works. Tokens are long enough that guessing them is not practical anyway.
 - Invites never create admins unless you ask for it, and never create the owner: if Home
   Assistant has no owner yet, registration is refused.
 - The page sends `Referrer-Policy: no-referrer`, a strict CSP and no-cache headers.
-- **Notifications are visible to every user.** When the link is not emailed, it is shown in a
-  notification; revoke the invite if someone else may have used it.
+- The link is never put in a notification (every user can read those).
+- The link does exist outside the hashed store: in the email, in the action response and
+  anything that keeps it (automation traces), and in the access logs of a reverse proxy in
+  front of Home Assistant. Keep expiries short and revoke unused invites.
+- SMTP uses certificate validation; plain-text authentication (no encryption with a username)
+  is refused. Removing the integration deletes all invites.
 - The link only works where the URL works: if your Home Assistant is only reachable at home or
   through a VPN, the guest has to be there to register.
 

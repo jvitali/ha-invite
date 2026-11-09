@@ -19,7 +19,7 @@ create:
       selector:
         number:
           min: 1
-          max: 720
+          max: 168
           mode: box
           unit_of_measurement: h
 revoke:

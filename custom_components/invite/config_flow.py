@@ -50,6 +50,14 @@ _LOGGER = logging.getLogger(__name__)
 _URL = TextSelector(TextSelectorConfig(type=TextSelectorType.URL))
 
 
+def _valid_email(address: str) -> bool:
+    try:
+        vol.Email()(address)  # pylint: disable=no-value-for-parameter
+    except vol.Invalid:
+        return False
+    return True
+
+
 def _valid_url(url: str) -> bool:
     return url.startswith(("http://", "https://")) and len(url) > len("https://x")
 
@@ -100,6 +108,13 @@ class InviteOptionsFlow(OptionsFlowWithReload):
             if options.get(CONF_SMTP_HOST):
                 if not options.get(CONF_SMTP_SENDER):
                     errors[CONF_SMTP_SENDER] = "sender_required"
+                elif not _valid_email(options[CONF_SMTP_SENDER]):
+                    errors[CONF_SMTP_SENDER] = "invalid_sender"
+                elif options.get(CONF_SMTP_ENCRYPTION) == ENCRYPTION_NONE and options.get(
+                    CONF_SMTP_USERNAME
+                ):
+                    # The password would travel in plain text.
+                    errors[CONF_SMTP_ENCRYPTION] = "insecure_auth"
                 else:
                     try:
                         await self.hass.async_add_executor_job(check_smtp, options)

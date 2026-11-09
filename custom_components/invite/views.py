@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 from collections import deque
 from datetime import datetime
 from html import escape
 from http import HTTPStatus
-from typing import TYPE_CHECKING
 
 from aiohttp import web
 from homeassistant.components import persistent_notification
 from homeassistant.components.http import HomeAssistantView
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
@@ -21,25 +22,27 @@ from .const import (
     DOMAIN,
     FAILED_ATTEMPT_WINDOW,
     MAX_FAILED_ATTEMPTS,
+    MAX_PASSWORD_BYTES,
+    MAX_TRACKED_CLIENTS,
     MIN_PASSWORD_LENGTH,
     REGISTER_URL,
     USERNAME_PATTERN,
 )
+from .models import DATA_INVITE
+from .store import Invite
 from .texts import get_texts
-from .users import UsernameTakenError, async_create_user
-
-if TYPE_CHECKING:
-    from . import InviteConfigEntry
+from .users import UsernameTakenError, async_create_user, async_remove_user
 
 _LOGGER = logging.getLogger(__name__)
 
 _USERNAME_RE = re.compile(USERNAME_PATTERN)
 
+# Home Assistant's own middleware adds X-Frame-Options: SAMEORIGIN; the CSP below forbids
+# framing altogether in current browsers.
 _SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     # The token is in the URL: never leak it to other sites.
     "Referrer-Policy": "no-referrer",
-    "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy": (
         "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
@@ -75,24 +78,52 @@ def _page(title: str, body: str, status: int = HTTPStatus.OK) -> web.Response:
     )
 
 
-class _FailedAttempts:
-    """Count failed token lookups per client address."""
+def client_key(remote: str | None) -> str:
+    """Group clients for rate limiting: one IPv4 address, or one IPv6 /64."""
+    if not remote:
+        return "unknown"
+    try:
+        address = ipaddress.ip_address(remote)
+    except ValueError:
+        return remote
+    if address.version == 6:
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
+class FailedAttempts:
+    """Count failed token lookups per client, with bounded memory."""
 
     def __init__(self) -> None:
         self._attempts: dict[str, deque[datetime]] = {}
 
-    def _recent(self, remote: str) -> deque[datetime]:
-        attempts = self._attempts.setdefault(remote, deque())
+    def _prune(self, key: str) -> deque[datetime] | None:
+        attempts = self._attempts.get(key)
+        if attempts is None:
+            return None
         cutoff = dt_util.utcnow() - FAILED_ATTEMPT_WINDOW
         while attempts and attempts[0] < cutoff:
             attempts.popleft()
+        if not attempts:
+            del self._attempts[key]
+            return None
         return attempts
 
-    def blocked(self, remote: str) -> bool:
-        return len(self._recent(remote)) >= MAX_FAILED_ATTEMPTS
+    def blocked(self, key: str) -> bool:
+        attempts = self._prune(key)
+        return attempts is not None and len(attempts) >= MAX_FAILED_ATTEMPTS
 
-    def add(self, remote: str) -> None:
-        self._recent(remote).append(dt_util.utcnow())
+    def add(self, key: str) -> None:
+        attempts = self._prune(key)
+        if attempts is None:
+            while len(self._attempts) >= MAX_TRACKED_CLIENTS:
+                # Forget the client tracked the longest (dicts keep insertion order).
+                del self._attempts[next(iter(self._attempts))]
+            attempts = self._attempts[key] = deque()
+        attempts.append(dt_util.utcnow())
+
+    def __len__(self) -> int:
+        return len(self._attempts)
 
 
 class InviteRegisterView(HomeAssistantView):
@@ -104,23 +135,27 @@ class InviteRegisterView(HomeAssistantView):
 
     def __init__(self) -> None:
         """Initialize the view."""
-        self._failed = _FailedAttempts()
+        self.failed = FailedAttempts()
 
     @staticmethod
-    def _entry(hass: HomeAssistant) -> InviteConfigEntry | None:
+    def _entry(hass: HomeAssistant) -> ConfigEntry | None:
         entries = hass.config_entries.async_loaded_entries(DOMAIN)
         return entries[0] if entries else None
 
-    def _invalid(self, hass: HomeAssistant, remote: str) -> web.Response:
-        self._failed.add(remote)
+    def _lookup(self, hass: HomeAssistant, token: str) -> Invite | None:
+        if self._entry(hass) is None or (data := hass.data.get(DATA_INVITE)) is None:
+            return None
+        return data.store.get_pending_by_token(token)
+
+    def _reject(self, hass: HomeAssistant, key: str) -> web.Response:
+        """Answer an unusable token, counting it as a failed attempt."""
         texts = get_texts(hass.config.language)
+        if self.failed.blocked(key):
+            body = f"<p class='error'>{escape(texts['too_many'])}</p>"
+            return _page(texts["page_title"], body, HTTPStatus.TOO_MANY_REQUESTS)
+        self.failed.add(key)
         body = f"<h1>{escape(texts['invalid_title'])}</h1><p>{escape(texts['invalid_body'])}</p>"
         return _page(texts["invalid_title"], body, HTTPStatus.NOT_FOUND)
-
-    def _too_many(self, hass: HomeAssistant) -> web.Response:
-        texts = get_texts(hass.config.language)
-        body = f"<p class='error'>{escape(texts['too_many'])}</p>"
-        return _page(texts["page_title"], body, HTTPStatus.TOO_MANY_REQUESTS)
 
     @staticmethod
     def _form(
@@ -150,49 +185,43 @@ class InviteRegisterView(HomeAssistantView):
     async def get(self, request: web.Request, token: str) -> web.Response:
         """Show the registration form."""
         hass: HomeAssistant = request.app["hass"]
-        remote = request.remote or "unknown"
-        if self._failed.blocked(remote):
-            return self._too_many(hass)
-        entry = self._entry(hass)
-        if (
-            entry is None
-            or (invite := entry.runtime_data.store.get_pending_by_token(token)) is None
-        ):
-            return self._invalid(hass, remote)
+        # A valid token is always honoured; only failures are throttled.
+        if (invite := self._lookup(hass, token)) is None:
+            return self._reject(hass, client_key(request.remote))
         return self._form(hass, invite.name)
 
     async def post(self, request: web.Request, token: str) -> web.Response:
         """Create the user."""
         hass: HomeAssistant = request.app["hass"]
-        remote = request.remote or "unknown"
-        if self._failed.blocked(remote):
-            return self._too_many(hass)
-        entry = self._entry(hass)
-        if entry is None:
-            return self._invalid(hass, remote)
-        store = entry.runtime_data.store
+        key = client_key(request.remote)
+        if (invite := self._lookup(hass, token)) is None:
+            return self._reject(hass, key)
         texts = get_texts(hass.config.language)
 
-        async with entry.runtime_data.register_lock:
-            # Looked up inside the lock so two submits cannot both use the same invite.
-            if (invite := store.get_pending_by_token(token)) is None:
-                return self._invalid(hass, remote)
+        # Read and validate the form before taking the lock, so a slow client holding a link
+        # cannot stall everybody else's registration.
+        form = await request.post()
+        username = str(form.get("username", "")).strip().casefold()
+        password = str(form.get("password", ""))
+        confirm = str(form.get("password_confirm", ""))
+        error: str | None = None
+        if not _USERNAME_RE.match(username):
+            error = texts["error_username"]
+        elif len(password) < MIN_PASSWORD_LENGTH:
+            error = texts["error_password_short"].format(min=MIN_PASSWORD_LENGTH)
+        elif len(password.encode()) > MAX_PASSWORD_BYTES:
+            error = texts["error_password_long"].format(max=MAX_PASSWORD_BYTES)
+        elif password != confirm:
+            error = texts["error_password_mismatch"]
+        if error:
+            return self._form(hass, invite.name, username, error)
 
-            data = await request.post()
-            username = str(data.get("username", "")).strip().casefold()
-            password = str(data.get("password", ""))
-            confirm = str(data.get("password_confirm", ""))
-
-            error: str | None = None
-            if not _USERNAME_RE.match(username):
-                error = texts["error_username"]
-            elif len(password) < MIN_PASSWORD_LENGTH:
-                error = texts["error_password_short"].format(min=MIN_PASSWORD_LENGTH)
-            elif password != confirm:
-                error = texts["error_password_mismatch"]
-            if error:
-                return self._form(hass, invite.name, username, error)
-
+        data = hass.data[DATA_INVITE]
+        async with data.lock:
+            # Looked up again inside the lock: the invite may have been used or revoked while
+            # the form was being read.
+            if (invite := self._lookup(hass, token)) is None:
+                return self._reject(hass, key)
             try:
                 user = await async_create_user(hass, invite.name, username, password, invite.admin)
             except UsernameTakenError:
@@ -200,8 +229,12 @@ class InviteRegisterView(HomeAssistantView):
             except Exception:
                 _LOGGER.exception("Registration failed for invite %s", invite.id)
                 return self._form(hass, invite.name, username, texts["error_unknown"])
-
-            await store.async_mark_used(invite, user.id)
+            try:
+                await data.store.async_mark_used(invite, user.id)
+            except Exception:
+                _LOGGER.exception("Could not mark invite %s as used; removing user", invite.id)
+                await async_remove_user(hass, user, username)
+                return self._form(hass, invite.name, username, texts["error_unknown"])
 
         _LOGGER.info("Invite %s used: created user %s (%s)", invite.id, username, user.id)
         persistent_notification.async_create(
@@ -210,7 +243,8 @@ class InviteRegisterView(HomeAssistantView):
             title=texts["notif_used_title"],
             notification_id=f"{DOMAIN}_used_{invite.id}",
         )
-        base_url = entry.data[CONF_BASE_URL]
+        entry = self._entry(hass)
+        base_url = entry.data[CONF_BASE_URL] if entry else "/"
         body = (
             f"<h1>{escape(texts['done_title'])}</h1>"
             f"<p>{escape(texts['done_body'].format(username=username))}</p>"

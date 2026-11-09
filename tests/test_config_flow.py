@@ -5,6 +5,7 @@ from __future__ import annotations
 import smtplib
 from unittest.mock import patch
 
+import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -12,12 +13,22 @@ from homeassistant.data_entry_flow import FlowResultType
 from custom_components.invite.const import (
     CONF_BASE_URL,
     CONF_EXPIRY_HOURS,
+    CONF_SMTP_ENCRYPTION,
     CONF_SMTP_HOST,
     CONF_SMTP_PASSWORD,
     CONF_SMTP_SENDER,
     CONF_SMTP_USERNAME,
     DOMAIN,
+    ENCRYPTION_NONE,
 )
+
+SMTP_INPUT = {
+    CONF_EXPIRY_HOURS: 24,
+    CONF_SMTP_HOST: "smtp.example.com",
+    CONF_SMTP_USERNAME: "me@example.com",
+    CONF_SMTP_PASSWORD: "app-password",
+    CONF_SMTP_SENDER: "me@example.com",
+}
 
 
 async def test_user_flow(hass: HomeAssistant) -> None:
@@ -71,3 +82,31 @@ async def test_options_smtp(hass: HomeAssistant, setup_invite) -> None:
         )
     await hass.async_block_till_done()
     assert entry.options[CONF_SMTP_PASSWORD] == "app-password"
+
+
+@pytest.mark.parametrize(
+    ("changes", "errors"),
+    [
+        ({CONF_SMTP_SENDER: "not-an-email"}, {CONF_SMTP_SENDER: "invalid_sender"}),
+        ({CONF_SMTP_ENCRYPTION: ENCRYPTION_NONE}, {CONF_SMTP_ENCRYPTION: "insecure_auth"}),
+    ],
+)
+async def test_options_rejected_before_connecting(
+    hass: HomeAssistant, setup_invite, changes: dict, errors: dict
+) -> None:
+    """A bad sender or plain-text authentication is refused without contacting the server."""
+    result = await hass.config_entries.options.async_init(setup_invite.entry_id)
+    with patch("custom_components.invite.config_flow.check_smtp") as check:
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {**SMTP_INPUT, **changes}
+        )
+    assert result["errors"] == errors
+    check.assert_not_called()
+
+
+async def test_options_cannot_connect(hass: HomeAssistant, setup_invite) -> None:
+    """Connection problems are reported."""
+    result = await hass.config_entries.options.async_init(setup_invite.entry_id)
+    with patch("custom_components.invite.config_flow.check_smtp", side_effect=OSError):
+        result = await hass.config_entries.options.async_configure(result["flow_id"], SMTP_INPUT)
+    assert result["errors"] == {"base": "cannot_connect"}

@@ -1,7 +1,8 @@
 """Persistent storage for invitations.
 
-Only a SHA-256 hash of each token is stored: the token itself exists only in the link
-sent to the guest, so reading the storage file is not enough to register.
+Only a SHA-256 hash of each token is stored, so reading the storage file is not enough to
+register. The link itself still exists wherever it was sent (email, the action response and
+anything that keeps it, such as automation traces).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, TOKEN_BYTES
+from .const import DOMAIN, INVITE_ID_BYTES, PRUNE_AFTER, TOKEN_BYTES
 
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.invites"
@@ -49,13 +50,18 @@ class Invite:
 
     def status(self, now: datetime | None = None) -> str:
         """Return the current status of the invite."""
+        if self.used_at:
+            # Checked first: an account exists, whatever else happened to the invite.
+            return STATUS_USED
         if self.revoked_at:
             return STATUS_REVOKED
-        if self.used_at:
-            return STATUS_USED
         if (now or dt_util.utcnow()) >= dt_util.parse_datetime(self.expires_at):
             return STATUS_EXPIRED
         return STATUS_PENDING
+
+    def finished_at(self) -> datetime:
+        """Return when the invite stopped being usable (or will)."""
+        return dt_util.parse_datetime(self.used_at or self.revoked_at or self.expires_at)
 
     def as_public_dict(self) -> dict[str, Any]:
         """Return the invite without its token hash."""
@@ -76,23 +82,47 @@ class InviteStore:
         self.invites: dict[str, Invite] = {}
 
     async def async_load(self) -> None:
-        """Load invitations from disk."""
+        """Load invitations from disk, dropping old finished ones."""
         data = await self._store.async_load() or {"invites": []}
         self.invites = {item["id"]: Invite(**item) for item in data["invites"]}
+        if self._prune():
+            await self._async_save()
+
+    async def async_remove(self) -> None:
+        """Delete all invitations, in memory and on disk."""
+        self.invites = {}
+        await self._store.async_remove()
+
+    def _prune(self) -> bool:
+        cutoff = dt_util.utcnow() - PRUNE_AFTER
+        old = [
+            invite_id
+            for invite_id, invite in self.invites.items()
+            if invite.status() != STATUS_PENDING and invite.finished_at() < cutoff
+        ]
+        for invite_id in old:
+            del self.invites[invite_id]
+        return bool(old)
 
     async def _async_save(self) -> None:
         await self._store.async_save(
             {"invites": [asdict(invite) for invite in self.invites.values()]}
         )
 
+    def _new_id(self) -> str:
+        while (invite_id := secrets.token_hex(INVITE_ID_BYTES)) in self.invites:
+            pass
+        return invite_id
+
     async def async_create(
         self, name: str, email: str | None, admin: bool, expires_in: timedelta
     ) -> tuple[Invite, str]:
         """Create an invite and return it with its (unhashed) token."""
+        self._prune()
         token = secrets.token_urlsafe(TOKEN_BYTES)
         now = dt_util.utcnow()
         invite = Invite(
-            id=secrets.token_hex(4),
+            id=self._new_id(),
             token_hash=hash_token(token),
             name=name,
             email=email,
@@ -119,7 +149,7 @@ class InviteStore:
         await self._async_save()
 
     async def async_revoke(self, invite_id: str) -> Invite | None:
-        """Revoke an invite. Return it, or None if it does not exist."""
+        """Revoke a pending invite. Return it, or None if it does not exist."""
         if (invite := self.invites.get(invite_id)) is None:
             return None
         if invite.status() == STATUS_PENDING:
