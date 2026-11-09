@@ -110,3 +110,13 @@ async def test_options_cannot_connect(hass: HomeAssistant, setup_invite) -> None
     with patch("custom_components.invite.config_flow.check_smtp", side_effect=OSError):
         result = await hass.config_entries.options.async_configure(result["flow_id"], SMTP_INPUT)
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_options_sender_with_display_name(hass: HomeAssistant, setup_invite) -> None:
+    """A sender like "Home <me@example.com>" is accepted."""
+    result = await hass.config_entries.options.async_init(setup_invite.entry_id)
+    with patch("custom_components.invite.config_flow.check_smtp"):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {**SMTP_INPUT, CONF_SMTP_SENDER: "Home <me@example.com>"}
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import smtplib
+from email.utils import parseaddr
 from typing import Any
 
 import voluptuous as vol
@@ -51,6 +52,8 @@ _URL = TextSelector(TextSelectorConfig(type=TextSelectorType.URL))
 
 
 def _valid_email(address: str) -> bool:
+    """Accept "me@example.com" and "Home <me@example.com>"."""
+    _, address = parseaddr(address)
     try:
         vol.Email()(address)  # pylint: disable=no-value-for-parameter
     except vol.Invalid:
@@ -131,7 +134,10 @@ class InviteOptionsFlow(OptionsFlowWithReload):
             {
                 vol.Required(
                     CONF_EXPIRY_HOURS,
-                    default=current.get(CONF_EXPIRY_HOURS, DEFAULT_EXPIRY_HOURS),
+                    default=min(
+                        int(current.get(CONF_EXPIRY_HOURS, DEFAULT_EXPIRY_HOURS)),
+                        MAX_EXPIRY_HOURS,
+                    ),
                 ): NumberSelector(
                     NumberSelectorConfig(
                         min=1, max=MAX_EXPIRY_HOURS, step=1, mode=NumberSelectorMode.BOX

@@ -146,7 +146,12 @@ class InviteStore:
         """Mark an invite as used by the given user."""
         invite.used_at = dt_util.utcnow().isoformat()
         invite.user_id = user_id
-        await self._async_save()
+        try:
+            await self._async_save()
+        except Exception:
+            # Keep memory consistent with disk: the caller removes the new account.
+            invite.used_at = invite.user_id = None
+            raise
 
     async def async_revoke(self, invite_id: str) -> Invite | None:
         """Revoke a pending invite. Return it, or None if it does not exist."""

@@ -15,6 +15,7 @@ from homeassistant.components.person import DOMAIN as PERSON_DOMAIN
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 
 from custom_components.invite import users as users_module
 from custom_components.invite.const import (
@@ -25,6 +26,7 @@ from custom_components.invite.const import (
     CONF_SMTP_USERNAME,
     DOMAIN,
     ENCRYPTION_TLS,
+    MAX_EXPIRY_HOURS,
     MAX_FAILED_ATTEMPTS,
     MAX_TRACKED_CLIENTS,
     PRUNE_AFTER,
@@ -486,3 +488,36 @@ async def test_email_failure_revokes(hass: HomeAssistant, setup_invite) -> None:
     (invite,) = _store(hass).invites.values()
     assert invite.status() == "revoked"
     assert "/api/invite/register/" not in _notifications_text(hass)
+
+
+async def test_failed_save_keeps_invite_pending(
+    hass: HomeAssistant, setup_invite, hass_client_no_auth
+) -> None:
+    """If saving the 'used' mark fails, the invite stays pending and the guest can retry."""
+    result = await _create(hass)
+    client = await hass_client_no_auth()
+    store = _store(hass)
+    with patch.object(store._store, "async_save", side_effect=OSError):
+        resp = await client.post(_path(result["link"]), data=_form())
+    assert "No se pudo crear" in await resp.text()
+    invite = store.invites[result["invite_id"]]
+    assert invite.status() == "pending"
+    assert invite.user_id is None
+    assert not await _users_named(hass, "Ana")
+    resp = await client.post(_path(result["link"]), data=_form())
+    assert "lista" in await resp.text()
+
+
+@pytest.mark.parametrize("entry_options", [{"expiry_hours": 720}])
+async def test_old_expiry_option_capped(hass: HomeAssistant, setup_invite) -> None:
+    """An expiry saved by an older version is capped to the current maximum."""
+    result = await _create(hass)
+    invite = _store(hass).invites[result["invite_id"]]
+    lifetime = dt_util.parse_datetime(invite.expires_at) - dt_util.parse_datetime(invite.created_at)
+    assert lifetime == timedelta(hours=MAX_EXPIRY_HOURS)
+
+
+def test_client_key_ipv4_mapped() -> None:
+    """IPv4-mapped IPv6 addresses are keyed by their IPv4 address."""
+    assert client_key("::ffff:192.0.2.1") == "192.0.2.1"
+    assert client_key("::ffff:192.0.2.1") != client_key("::ffff:198.51.100.7")

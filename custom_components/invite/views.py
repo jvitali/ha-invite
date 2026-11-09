@@ -87,6 +87,8 @@ def client_key(remote: str | None) -> str:
     except ValueError:
         return remote
     if address.version == 6:
+        if address.ipv4_mapped:
+            return str(address.ipv4_mapped)
         return str(ipaddress.ip_network(f"{address}/64", strict=False))
     return str(address)
 

@@ -98,7 +98,7 @@
       "message": "El email no está configurado en las opciones de Invite. Configurá SMTP, o dejá el email vacío y tomá el enlace de la respuesta de la acción."
     },
     "response_required": {
-      "message": "Sin email, el enlace solo se entrega en la respuesta de la acción. Ejecutala con la respuesta activada (en Configuración → Herramientas → Acciones se muestra sola)."
+      "message": "Sin email, el enlace solo se entrega en la respuesta de la acción. Ejecutala desde Configuración → Herramientas → Acciones, donde se muestra la respuesta, o desde un script con response_variable."
     },
     "email_failed": {
       "message": "No se pudo mandar el mail de invitación ({error}). La invitación quedó revocada; revisá las opciones SMTP y probá de nuevo."

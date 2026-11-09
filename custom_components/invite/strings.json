@@ -98,7 +98,7 @@
       "message": "Email is not configured in the Invite options. Set up SMTP, or leave the email empty and get the link from the action response."
     },
     "response_required": {
-      "message": "Without an email, the link is only given in the action response. Run the action with its response enabled (in Settings → Tools → Actions it is shown automatically)."
+      "message": "Without an email, the link is only given in the action response. Run the action from Settings → Tools → Actions, where the response is shown, or from a script with response_variable."
     },
     "email_failed": {
       "message": "The invitation email could not be sent ({error}). The invite was revoked; check the SMTP options and try again."

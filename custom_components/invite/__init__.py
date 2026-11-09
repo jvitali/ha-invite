@@ -94,8 +94,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             raise ServiceValidationError(
                 translation_domain=DOMAIN, translation_key="response_required"
             )
-        hours = call.data.get(
-            ATTR_EXPIRES_HOURS, entry.options.get(CONF_EXPIRY_HOURS, DEFAULT_EXPIRY_HOURS)
+        # Options saved by older versions may exceed the current maximum.
+        hours = min(
+            int(
+                call.data.get(
+                    ATTR_EXPIRES_HOURS,
+                    entry.options.get(CONF_EXPIRY_HOURS, DEFAULT_EXPIRY_HOURS),
+                )
+            ),
+            MAX_EXPIRY_HOURS,
         )
         async with data.lock:
             invite, token = await data.store.async_create(
